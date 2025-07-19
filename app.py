@@ -1,76 +1,149 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import xgboost as xgb
+from sklearn.preprocessing import StandardScaler
+import joblib
+import os
 import matplotlib.pyplot as plt
 import seaborn as sns
-from xgboost import XGBClassifier
-from sklearn.metrics import confusion_matrix, classification_report
 
-# Cache model loading for performance
-@st.cache_resource
-def load_model():
-    model = XGBClassifier()
-    model.load_model("burnout_model.json")  # Saved model file
-    return model
+# --- Load model and scaler ---
+model = xgb.Booster()
+model.load_model("burnout_model.json")
+scaler = joblib.load("scaler.pkl")
 
-model = load_model()
+# --- Load threshold ---
+threshold_path = "burnout_threshold.txt"
+burnout_threshold = 0.5
+if os.path.exists(threshold_path):
+    with open(threshold_path, "r") as f:
+        burnout_threshold = float(f.read().strip())
 
-st.title("🧠 Burnout Detection System")
-st.write("Upload employee data CSV for burnout risk prediction.")
+# --- Streamlit UI Layout ---
+st.set_page_config(page_title="Burnout Prediction App", layout="wide")
+st.title("💼 Burnout Risk Prediction System")
 
-uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
-threshold = st.slider("Select classification threshold", 0.0, 1.0, 0.5, 0.01)
+tabs = st.tabs(["🏠 Individual Prediction", "📊 Organization Upload & Analysis"])
 
-expected_features = ["satisfaction", "hours_worked", "num_projects", "remote_work", "team_conflict"]
+# ------------------------- TAB 1: INDIVIDUAL PREDICTION -------------------------
+with tabs[0]:
+    st.subheader("Enter Your Workplace Activity Information")
 
-if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
-    st.subheader("Input Data Preview")
-    st.dataframe(df.head())
+    work_hours_per_week = st.slider("Work Hours per Week", 30, 80, 45)
+    after_hours_emails = st.slider("After-hours Emails per Week", 0, 50, 10)
+    negative_sentiment_score = st.slider("Negative Sentiment Score (0.0–1.0)", 0.0, 1.0, 0.3, step=0.01)
+    meeting_count = st.slider("Number of Weekly Meetings", 0, 40, 10)
+    task_completion_rate = st.slider("Task Completion Rate (0.0–1.0)", 0.0, 1.0, 0.8, step=0.01)
 
-    # Check if label column exists for evaluation
-    has_label = "burnout" in df.columns
+    input_data = {
+        "work_hours_per_week": work_hours_per_week,
+        "after_hours_emails": after_hours_emails,
+        "negative_sentiment_score": negative_sentiment_score,
+        "meeting_count": meeting_count,
+        "task_completion_rate": task_completion_rate
+    }
 
-    # Filter only expected features for prediction
-    try:
-        X = df[expected_features]
-    except KeyError as e:
-        st.error(f"Input CSV is missing one or more required columns: {expected_features}")
-        st.stop()
+    expected_columns = [
+        "work_hours_per_week",
+        "after_hours_emails",
+        "negative_sentiment_score",
+        "meeting_count",
+        "task_completion_rate"
+    ]
 
-    if has_label:
-        y = df["burnout"]
+    input_df = pd.DataFrame([input_data])[expected_columns]
+    X_scaled = scaler.transform(input_df)
+    dtest = xgb.DMatrix(X_scaled)
+    proba = model.predict(dtest)[0]
+    prediction = int(proba >= burnout_threshold)
 
-    # For now, no scaling - just convert to numpy
-    X_input = X.values
+    st.subheader("Prediction Result")
+    if prediction == 1:
+        st.error(f"⚠️ High Burnout Risk Detected (Probability: {proba:.2f})")
+    else:
+        st.success(f"✅ No Burnout Risk Detected (Probability: {proba:.2f})")
 
-    # Predict probabilities and apply threshold
-    y_proba = model.predict_proba(X_input)[:, 1]
-    y_pred = (y_proba >= threshold).astype(int)
+# ------------------------- TAB 2: ORGANIZATION UPLOAD -------------------------
+with tabs[1]:
+    st.subheader("Upload Employee Data CSV")
 
-    # Show prediction results
-    st.subheader("Prediction Results")
-    results_df = df.copy()
-    results_df["Burnout Probability"] = y_proba
-    results_df["Prediction (1=Burnout)"] = y_pred
-    st.dataframe(results_df)
+    st.markdown("""
+        Upload a `.csv` file with the following columns:
+        - `work_hours_per_week`
+        - `after_hours_emails`
+        - `negative_sentiment_score`
+        - `meeting_count`
+        - `task_completion_rate`
+    """)
 
-    if has_label:
-        st.subheader("Model Evaluation")
+    uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
+    if uploaded_file:
+        try:
+            df = pd.read_csv(uploaded_file)
+            required_cols = [
+                "work_hours_per_week",
+                "after_hours_emails",
+                "negative_sentiment_score",
+                "meeting_count",
+                "task_completion_rate"
+            ]
 
-        cm = confusion_matrix(y, y_pred)
-        report = classification_report(y, y_pred, output_dict=True)
-        report_df = pd.DataFrame(report).transpose()
+            if not all(col in df.columns for col in required_cols):
+                st.error("❌ Uploaded CSV is missing required columns.")
+            else:
+                df = df[required_cols]  # reorder
+                X_scaled = scaler.transform(df)
+                dtest = xgb.DMatrix(X_scaled)
+                df["burnout_probability"] = model.predict(dtest)
+                df["burnout_prediction"] = (df["burnout_probability"] >= burnout_threshold).astype(int)
 
-        st.markdown("**Confusion Matrix**")
-        fig, ax = plt.subplots()
-        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=[0, 1], yticklabels=[0, 1])
-        plt.xlabel("Predicted")
-        plt.ylabel("Actual")
-        st.pyplot(fig)
+                st.success("✅ Predictions generated successfully.")
+                st.write(df.head())
 
-        st.markdown("**Classification Report**")
-        st.dataframe(report_df)
+                # Download button
+                st.download_button(
+                    label="📥 Download Predictions as CSV",
+                    data=df.to_csv(index=False).encode("utf-8"),
+                    file_name="burnout_predictions.csv",
+                    mime="text/csv"
+                )
 
-st.sidebar.markdown("---")
-st.sidebar.write("👨‍💻 Built with XGBoost + Streamlit")
+                # Visualizations
+                st.markdown("---")
+                st.markdown("### 📈 Burnout Overview")
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.markdown("**Burnout Distribution**")
+                    pie_data = df["burnout_prediction"].value_counts().rename(index={0: "No Burnout", 1: "Burnout"})
+                    fig1, ax1 = plt.subplots()
+                    ax1.pie(pie_data, labels=pie_data.index, autopct='%1.1f%%', startangle=90, colors=["#4CAF50", "#F44336"])
+                    ax1.axis('equal')
+                    st.pyplot(fig1)
+
+                with col2:
+                    st.markdown("**Average Feature Values by Burnout**")
+                    avg_features = df.groupby("burnout_prediction")[required_cols].mean()
+                    avg_features.index = ["No Burnout", "Burnout"]
+                    fig2, ax2 = plt.subplots(figsize=(6, 4))
+                    avg_features.T.plot(kind="bar", ax=ax2, colormap="coolwarm")
+                    ax2.set_ylabel("Average Value")
+                    ax2.set_title("Feature Comparison")
+                    st.pyplot(fig2)
+
+        except Exception as e:
+            st.error(f"Error processing file: {e}")
+
+# ------------------------- SIDEBAR -------------------------
+st.sidebar.markdown("### ℹ️ About This App")
+st.sidebar.write("""
+This tool helps individuals and organizations predict burnout risk 
+based on workplace activity patterns.
+
+**Trained on synthetic data**, this model estimates risk based on:
+- Workload intensity
+- Communication patterns
+- Task performance
+- Emotional sentiment
+""")
