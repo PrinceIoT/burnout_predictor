@@ -20,14 +20,30 @@ if os.path.exists(threshold_path):
         burnout_threshold = float(f.read().strip())
 
 # --- Streamlit UI Layout ---
-st.set_page_config(page_title="Burnout Prediction App", layout="wide")
+st.set_page_config(page_title="Burnout Risk Prediction App", layout="wide")
 st.title("💼 Burnout Risk Prediction System")
 
-tabs = st.tabs(["🏠 Individual Prediction", "📊 Organization Upload & Analysis"])
+menu = ["🏠 Home", "👤 Individual Prediction", "🏢 Organization Upload & Analysis", "🧘 Healthy Work Habits", "📞 Contact Us"]
+choice = st.sidebar.selectbox("Navigation", menu)
 
-# ------------------------- TAB 1: INDIVIDUAL PREDICTION -------------------------
-with tabs[0]:
-    st.subheader("Enter Your Workplace Activity Information")
+# ------------------------- HOME PAGE -------------------------
+if choice == "🏠 Home":
+    st.header("Welcome to the Burnout Risk Prediction System")
+    st.markdown("""
+    This application helps individuals and organizations assess the risk of burnout using workplace behavior data.
+    
+    🔍 Use this tool to:
+    - Check your personal burnout risk
+    - Analyze organizational trends and identify at-risk employees
+    - Learn about healthy work habits
+    
+    ---
+    Built with ❤️ for a healthier and more productive workplace.
+    """)
+
+# ------------------------- INDIVIDUAL PREDICTION -------------------------
+elif choice == "👤 Individual Prediction":
+    st.header("👤 Burnout Risk: Individual Prediction")
 
     work_hours_per_week = st.slider("Work Hours per Week", 30, 80, 45)
     after_hours_emails = st.slider("After-hours Emails per Week", 0, 50, 10)
@@ -43,14 +59,7 @@ with tabs[0]:
         "task_completion_rate": task_completion_rate
     }
 
-    expected_columns = [
-        "work_hours_per_week",
-        "after_hours_emails",
-        "negative_sentiment_score",
-        "meeting_count",
-        "task_completion_rate"
-    ]
-
+    expected_columns = list(input_data.keys())
     input_df = pd.DataFrame([input_data])[expected_columns]
     X_scaled = scaler.transform(input_df)
     dtest = xgb.DMatrix(X_scaled)
@@ -63,20 +72,20 @@ with tabs[0]:
     else:
         st.success(f"✅ No Burnout Risk Detected (Probability: {proba:.2f})")
 
-# ------------------------- TAB 2: ORGANIZATION UPLOAD -------------------------
-with tabs[1]:
-    st.subheader("Upload Employee Data CSV")
+# ------------------------- ORGANIZATION UPLOAD -------------------------
+elif choice == "🏢 Organization Upload & Analysis":
+    st.header("🏢 Organization Upload and Burnout Analysis")
 
     st.markdown("""
-        Upload a `.csv` file with the following columns:
-        - `work_hours_per_week`
-        - `after_hours_emails`
-        - `negative_sentiment_score`
-        - `meeting_count`
-        - `task_completion_rate`
+    Upload a `.csv` file with the following columns:
+    - `work_hours_per_week`
+    - `after_hours_emails`
+    - `negative_sentiment_score`
+    - `meeting_count`
+    - `task_completion_rate`
     """)
 
-    uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
+    uploaded_file = st.file_uploader("Upload Employee Data CSV", type=["csv"])
     if uploaded_file:
         try:
             df = pd.read_csv(uploaded_file)
@@ -91,7 +100,7 @@ with tabs[1]:
             if not all(col in df.columns for col in required_cols):
                 st.error("❌ Uploaded CSV is missing required columns.")
             else:
-                df = df[required_cols]  # reorder
+                df = df[required_cols]
                 X_scaled = scaler.transform(df)
                 dtest = xgb.DMatrix(X_scaled)
                 df["burnout_probability"] = model.predict(dtest)
@@ -100,7 +109,6 @@ with tabs[1]:
                 st.success("✅ Predictions generated successfully.")
                 st.write(df.head())
 
-                # Download button
                 st.download_button(
                     label="📥 Download Predictions as CSV",
                     data=df.to_csv(index=False).encode("utf-8"),
@@ -108,10 +116,8 @@ with tabs[1]:
                     mime="text/csv"
                 )
 
-                # Visualizations
                 st.markdown("---")
-                st.markdown("### 📈 Burnout Overview")
-
+                st.markdown("### 📊 Burnout Overview")
                 col1, col2 = st.columns(2)
 
                 with col1:
@@ -135,15 +141,28 @@ with tabs[1]:
         except Exception as e:
             st.error(f"Error processing file: {e}")
 
-# ------------------------- SIDEBAR -------------------------
-st.sidebar.markdown("### ℹ️ About This App")
-st.sidebar.write("""
-This tool helps individuals and organizations predict burnout risk 
-based on workplace activity patterns.
+# ------------------------- HEALTHY WORK HABITS -------------------------
+elif choice == "🧘 Healthy Work Habits":
+    st.header("🧘 Tips for Healthy Work Habits")
+    st.markdown("""
+    Here are some science-backed tips to prevent burnout:
 
-**Trained on synthetic data**, this model estimates risk based on:
-- Workload intensity
-- Communication patterns
-- Task performance
-- Emotional sentiment
-""")
+    - ⏱ **Take Regular Breaks:** Use the Pomodoro technique or similar.
+    - 💬 **Set Boundaries:** Limit after-hours emails and protect personal time.
+    - 🧠 **Mindfulness & Meditation:** Helps improve focus and lower stress.
+    - 🛌 **Prioritize Sleep:** Aim for 7–8 hours a night.
+    - 🤝 **Seek Support:** Talk to a colleague or professional.
+
+    Remember, productivity improves with well-being.
+    """)
+
+# ------------------------- CONTACT PAGE -------------------------
+elif choice == "📞 Contact Us":
+    st.header("📞 Get in Touch")
+    st.markdown("""
+    We'd love to hear from you!
+
+    📧 Email: support@burnoutcheck.ai  
+    🌐 Website: [burnoutcheck.ai](http://burnoutcheck.ai)  
+    🏢 Address: 123 Health St, Work City, Productivityland
+    """)
